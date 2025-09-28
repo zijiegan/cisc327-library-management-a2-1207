@@ -15,7 +15,6 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          # Use a stable version for CI. Your local 3.13 is fine; CI can use 3.11.
           python-version: "3.11"
 
       - name: Upgrade pip
@@ -24,17 +23,18 @@ jobs:
       - name: Install dependencies
         run: |
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          # Ensure pytest is available; install pytest-order to silence @pytest.mark.order warnings
           pip install pytest pytest-cov pytest-order
 
       - name: Initialize database and seed data
         shell: bash
         run: |
           python - <<'PY'
-          # Create tables and insert a few rows so search tests have data to work with.
+          # Create a fresh database schema and seed deterministic rows for tests.
           import sqlite3
           conn = sqlite3.connect("library.db")
           c = conn.cursor()
+
+          # Create books table if missing.
           c.execute("""
           CREATE TABLE IF NOT EXISTS books (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,17 +45,25 @@ jobs:
               available_copies INTEGER
           )
           """)
-          # Seed minimal dataset to satisfy search tests
+
+          # Ensure test ISBN used by test_add_book_valid does NOT exist.
+          # (The test inserts isbn='1234567890123' and expects success.)
+          c.execute("DELETE FROM books WHERE isbn = '1234567890123'")
+
+          # Seed data needed by search tests (case-insensitive title match).
           seed = [
               ("1984", "George Orwell", "9780451524935", 5, 5),
               ("Harry Potter and the Philosopher's Stone", "J.K. Rowling", "9780747532699", 5, 5),
               ("To Kill a Mockingbird", "Harper Lee", "9780061120084", 5, 5),
+              ("The Great Gatsby", "F. Scott Fitzgerald", "9780743273565", 5, 5),  # for 'great gatsby' title search
           ]
+
           for t, a, i, tot, ava in seed:
               c.execute(
                   "INSERT OR IGNORE INTO books (title, author, isbn, total_copies, available_copies) VALUES (?, ?, ?, ?, ?)",
                   (t, a, i, tot, ava)
               )
+
           conn.commit()
           conn.close()
           PY
