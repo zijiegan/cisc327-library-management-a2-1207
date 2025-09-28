@@ -29,41 +29,61 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          # Create a deterministic SQLite DB for tests and seed rows
+          # so title-partial search and add-book tests are reliable.
+
           import sqlite3
-          conn = sqlite3.connect("library.db")
+
+          DB = "library.db"
+          conn = sqlite3.connect(DB)
           c = conn.cursor()
 
-          # Create table if missing
+          # Create table with a UNIQUE isbn constraint (id is auto-increment).
           c.execute("""
           CREATE TABLE IF NOT EXISTS books (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT,
-            author TEXT,
-            isbn TEXT UNIQUE,
-            total_copies INTEGER,
-            available_copies INTEGER
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              title TEXT NOT NULL,
+              author TEXT NOT NULL,
+              isbn TEXT NOT NULL UNIQUE,
+              total_copies INTEGER NOT NULL,
+              available_copies INTEGER NOT NULL
           )
           """)
 
-          # Ensure the test ISBN isn't present so test_add_book_valid can insert
-          c.execute("DELETE FROM books WHERE isbn = '1234567890123'")
+          # Make sure any ISBN the tests will insert does NOT exist beforehand.
+          # test_add_book_valid inserts: 1234567890123
+          for isbn in ("1234567890123",):
+              c.execute("DELETE FROM books WHERE isbn = ?", (isbn,))
 
-          # Seed rows required by search tests (case-insensitive title match)
-          seed = [
-            ("1984", "George Orwell", "9780451524935", 5, 5),
-            ("Harry Potter and the Philosopher's Stone", "J.K. Rowling", "9780747532699", 5, 5),
-            ("To Kill a Mockingbird", "Harper Lee", "9780061120084", 5, 5),
-            ("The Great Gatsby", "F. Scott Fitzgerald", "9780743273565", 5, 5),  # 'great gatsby'
+          # Base seed used by search tests (case-insensitive title search on "great").
+          seed_rows = [
+              ("1984", "George Orwell", "9780451524935", 5, 5),
+              ("Harry Potter and the Philosopher's Stone", "J.K. Rowling", "9780747532699", 5, 5),
+              ("To Kill a Mockingbird", "Harper Lee", "9780061120084", 5, 5),
+              # This row is required for test_search_by_title_partial_case_insensitive
+              ("The Great Gatsby", "F. Scott Fitzgerald", "9780743273565", 5, 5),
           ]
-          for t, a, i, tot, ava in seed:
-            c.execute(
-              "INSERT OR IGNORE INTO books (title, author, isbn, total_copies, available_copies) VALUES (?, ?, ?, ?, ?)",
-              (t, a, i, tot, ava)
-            )
+
+          # Insert if missing; do not overwrite existing values unintentionally.
+          for row in seed_rows:
+              c.execute(
+                  "INSERT OR IGNORE INTO books (title, author, isbn, total_copies, available_copies) "
+                  "VALUES (?, ?, ?, ?, ?)",
+                  row
+              )
+
+          # Ensure the 'The Great Gatsby' row exists with the expected values.
+          # (Some environments might have a stale/partial row; we enforce it here.)
+          c.execute("""
+              UPDATE books
+                 SET title = ?, author = ?, total_copies = ?, available_copies = ?
+               WHERE isbn = ?
+          """, ("The Great Gatsby", "F. Scott Fitzgerald", 5, 5, "9780743273565"))
 
           conn.commit()
           conn.close()
           PY
+
 
 
       - name: Run tests
