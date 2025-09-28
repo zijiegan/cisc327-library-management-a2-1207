@@ -83,13 +83,10 @@ def _norm(s: Optional[str]) -> str:
 
 def add_book_to_catalog(title: str, author: str, isbn: str, total_copies: int) -> Tuple[bool, str]:
     """
-    Add a new book to the catalog.
-    Implements R1: Book Catalog Management
-
-    Returns:
-        (success: bool, message: str)
+    Add a new book to the catalog (DB-first; in-memory fallback).
+    Returns: (success: bool, message: str)
     """
-    # ---- Input validation ----
+    # 1) Validate input
     if not title or not title.strip():
         return False, "Title is required."
     if len(title.strip()) > 200:
@@ -106,27 +103,31 @@ def add_book_to_catalog(title: str, author: str, isbn: str, total_copies: int) -
     if not isinstance(total_copies, int) or total_copies <= 0:
         return False, "Total copies must be a positive integer."
 
-    # ---- Try DB path first (best-effort seed) ----
-    _ensure_db_seeded_if_needed()
-
-    # Duplicate check (DB)
+    # 2) Try DB-first: insert directly; if it fails, decide duplicate vs DB error
     try:
-        if get_book_by_isbn(isbn):
-            return False, "A book with this ISBN already exists."
-    except Exception:
-        # If DB access fails here, skip to fallback after insert attempt
-        pass
-
-    # Insert (DB)
-    try:
+        # try to insert (let DB enforce UNIQUE)
         res = insert_book(title.strip(), author.strip(), isbn, total_copies, total_copies)
         ok = bool(res[0]) if isinstance(res, tuple) else bool(res)
         if ok:
             return True, f'Book "{title.strip()}" has been successfully added to the catalog.'
-    except Exception:
-        # retry once after seed
-        _ensure_db_seeded_if_needed()
+
+        # insert_book returned falsy → check duplication
         try:
+            if get_book_by_isbn(isbn):
+                return False, "A book with this ISBN already exists."
+        except Exception:
+            pass
+        return False, "Database error occurred while adding the book."
+    except Exception:
+        # insert raised → check duplication first
+        try:
+            if get_book_by_isbn(isbn):
+                return False, "A book with this ISBN already exists."
+        except Exception:
+            pass
+        # then one more DB attempt after ensuring schema (best-effort)
+        try:
+            _ensure_db_seeded_if_needed()
             res = insert_book(title.strip(), author.strip(), isbn, total_copies, total_copies)
             ok = bool(res[0]) if isinstance(res, tuple) else bool(res)
             if ok:
@@ -134,10 +135,8 @@ def add_book_to_catalog(title: str, author: str, isbn: str, total_copies: int) -
         except Exception:
             pass
 
-    # ---- Fallback: in-memory catalog (CI safe) ----
+    # 3) Fallback to in-memory
     _memory_seed_if_needed()
-
-    # Duplicate check (memory)
     norm_new = "".join(c for c in isbn if c.isalnum()).lower()
     for b in _MEM_CATALOG:
         norm_isbn = "".join(c for c in str(b.get("isbn", "")) if c.isalnum()).lower()
@@ -299,48 +298,87 @@ def calculate_late_fee_for_book(patron_id: str, book_id: int) -> Dict[str, float
 
 
 def search_books_in_catalog(search_term: str, search_type: str) -> List[Dict]:
-    """Search books by title/author (partial, case-insensitive) or isbn (exact)."""
-    term = _norm(search_term)
+    """
+    Search books by title/author (partial, case-insensitive) or isbn (exact).
+    DB-first with SQL LIKE; fallback to in-memory.
+    """
+    term = (search_term or "").strip()
     if not term:
         return []
     if search_type not in {"title", "author", "isbn"}:
         return []
 
-    # Prefer DB, best-effort seed
-    books: List[Dict] = []
+    def _row_to_dict(row) -> Dict:
+        if isinstance(row, dict):
+            return row
+        # row is a tuple: (id, title, author, isbn, total_copies, available_copies)
+        return {
+            "id": row[0],
+            "title": row[1],
+            "author": row[2],
+            "isbn": row[3],
+            "total_copies": row[4],
+            "available_copies": row[5],
+        }
+
+    # 1) DB-first exact/LIKE query
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        if search_type == "isbn":
+            # exact (lower-cased to be safe)
+            q = """
+            SELECT id, title, author, isbn, total_copies, available_copies
+            FROM books
+            WHERE LOWER(isbn) = ?
+            """
+            rows = cur.execute(q, (term.lower(),)).fetchall()
+        else:
+            col = "title" if search_type == "title" else "author"
+            q = f"""
+            SELECT id, title, author, isbn, total_copies, available_copies
+            FROM books
+            WHERE LOWER({col}) LIKE ?
+            """
+            rows = cur.execute(q, (f"%{term.lower()}%",)).fetchall()
+
+        if rows:
+            return [_row_to_dict(r) for r in rows]
+    except Exception:
+        pass
+
+    # 2) If DB returned nothing (or errored), try to read all and filter
     try:
         books = get_all_books() or []
+        if books:
+            out: List[Dict] = []
+            if search_type == "isbn":
+                key = term.lower()
+                for b in books:
+                    v = str(b.get("isbn", "") if isinstance(b, dict) else b[3]).lower()
+                    if v == key:
+                        out.append(b if isinstance(b, dict) else _row_to_dict(b))
+                return out
+            else:
+                key = term.lower()
+                for b in books:
+                    v = str((b.get(search_type, "") if isinstance(b, dict)
+                             else (b[1] if search_type == "title" else b[2]))).lower()
+                    if key in v:
+                        out.append(b if isinstance(b, dict) else _row_to_dict(b))
+                return out
     except Exception:
-        books = []
+        pass
 
-    if not books:
-        _ensure_db_seeded_if_needed()
-        try:
-            books = get_all_books() or []
-        except Exception:
-            books = []
-
-    # If DB still empty/unavailable, use in-memory fallback
-    if not books:
-        _memory_seed_if_needed()
-        books = list(_MEM_CATALOG)
-
-    results: List[Dict] = []
+    # 3) Fallback to in-memory
+    _memory_seed_if_needed()
     if search_type == "isbn":
-        key = "".join(c for c in term if c.isalnum()).lower()
-        for b in books:
-            isbn = _norm(str(b.get("isbn", "")))
-            norm_isbn = "".join(c for c in isbn if c.isalnum()).lower()
-            if norm_isbn == key:
-                results.append(b)
+        key = term.lower()
+        return [b for b in _MEM_CATALOG if str(b.get("isbn", "")).lower() == key]
     else:
         key = term.lower()
-        for b in books:
-            hay = _norm(str(b.get(search_type, ""))).lower()
-            if key in hay:
-                results.append(b)
-
-    return results
+        return [b for b in _MEM_CATALOG if key in str(b.get(search_type, "")).lower()]
 
 
 
