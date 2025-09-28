@@ -11,27 +11,53 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      # 1) Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
+      # 2) Set up Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.11"   # keep 3.11 for broad compatibility
 
+      # 3) Install dependencies
       - name: Install dependencies
         run: |
-          # Upgrade pip and install dependencies
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            pip install pytest
-          fi
+          pip install -r requirements.txt
+          pip install pytest
 
-      - name: Run tests
-        env:
-          PYTHONPATH: ${{ github.workspace }}
+      # 4) Initialize SQLite database (create tables if not exist)
+      - name: Setup database
         run: |
-          # Run all tests but skip sample_test (designed to always fail)
-          pytest -q -k "not sample_test"
+          python - <<'PY'
+          import sqlite3
+
+          conn = sqlite3.connect('library.db')
+          c = conn.cursor()
+
+          # Create 'books' table if it does not exist
+          c.execute("""
+          CREATE TABLE IF NOT EXISTS books (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              title TEXT NOT NULL,
+              author TEXT NOT NULL,
+              isbn TEXT UNIQUE NOT NULL,
+              total_copies INTEGER NOT NULL,
+              available_copies INTEGER NOT NULL
+          )
+          """)
+
+          # (Optional) You can pre-seed minimal rows if your tests need them.
+          # Example:
+          # c.execute("INSERT OR IGNORE INTO books (id, title, author, isbn, total_copies, available_copies) VALUES (1, 'Seed Book', 'Seed Author', '0000000000000', 1, 1)")
+
+          conn.commit()
+          conn.close()
+          PY
+
+      # 5) Run tests
+      - name: Run tests
+        run: |
+          pytest -q
