@@ -1,6 +1,7 @@
 # tests/test_late_fee.py
 import pytest
-import library_service as svc
+import services.library_service as svc
+from services.payment_service import PaymentGateway
 
 def test_late_fee_no_overdue():
     """Returned within 14 days: no fee"""

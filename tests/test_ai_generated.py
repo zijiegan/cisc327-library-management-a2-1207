@@ -14,7 +14,8 @@ import time
 import sqlite3
 import pytest
 
-import library_service as svc
+import services.library_service as svc
+from services.payment_service import PaymentGateway
 
 
 # ---------- helpers ----------

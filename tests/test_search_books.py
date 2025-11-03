@@ -1,6 +1,7 @@
 # tests/test_search_books.py
 import pytest
-import library_service as svc
+import services.library_service as svc
+from services.payment_service import PaymentGateway
 
 def test_search_by_title_partial_case_insensitive():
     """Title partial, case-insensitive should return matches"""

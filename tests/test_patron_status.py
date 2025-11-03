@@ -1,6 +1,7 @@
 # tests/test_patron_status.py
 import pytest
-import library_service as svc
+import services.library_service as svc
+from services.payment_service import PaymentGateway
 
 def test_patron_status_basic_structure():
     """Report should be a dict with required top-level fields"""

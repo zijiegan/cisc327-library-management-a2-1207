@@ -1,6 +1,7 @@
 # tests/test_return_book.py
 import pytest
-import library_service as svc
+import services.library_service as svc
+from services.payment_service import PaymentGateway
 
 def test_return_success(monkeypatch):
     """Happy path: book is returned, availability updated, return date recorded"""

@@ -1,5 +1,6 @@
 import pytest
-import library_service as svc
+import services.library_service as svc
+from services.payment_service import PaymentGateway
 
 def test_add_book_valid():
     """Valid book should be added successfully"""

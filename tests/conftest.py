@@ -1,7 +1,15 @@
 # tests/conftest.py
 import os
+import sys
 import sqlite3
 import pytest
+
+# --- make project root importable ---
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+# ------------------------------------
+
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_database():

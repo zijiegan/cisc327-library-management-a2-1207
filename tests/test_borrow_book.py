@@ -1,6 +1,7 @@
 # tests/test_borrow_book.py
 import pytest
-import library_service as svc
+import services.library_service as svc
+from services.payment_service import PaymentGateway
 
 # Helpers
 def make_book(book_id=1, title="Demo", available=2):
