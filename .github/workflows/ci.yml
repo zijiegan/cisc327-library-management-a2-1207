@@ -7,8 +7,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    # make repo root importable as a package
     env:
-      PYTHONPATH: ${{ github.workspace }}
+      PYTHONPATH: ${{ github.workspace }}:$PYTHONPATH
 
     steps:
       - name: Checkout repository
@@ -25,16 +27,45 @@ jobs:
       - name: Install dependencies
         run: |
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pytest pytest-cov pytest-order
+          pip install pytest pytest-cov pytest-order requests
 
+      # ---------- DEBUG STEP (to see why "no module named services") ----------
+      - name: Debug Python path
+        shell: bash
+        run: |
+          echo "=== workspace ==="
+          pwd
+          echo "=== list files (top) ==="
+          ls -R .
+          echo "=== python version ==="
+          python --version
+          echo "=== PYTHONPATH ==="
+          echo "$PYTHONPATH"
+          echo "=== try import services ==="
+          python - <<'PY'
+          import sys, os
+          print("sys.path:")
+          for p in sys.path:
+              print("  ", p)
+          try:
+              import services
+              print("✅ imported services OK")
+          except Exception as e:
+              print("❌ failed to import services:", e)
+          PY
+
+      # ---------- create sqlite + seed like before ----------
       - name: Initialize database and seed data
         shell: bash
         run: |
           python - <<'PY'
           import sqlite3
-          conn = sqlite3.connect("library.db")
-          c = conn.cursor()
-          c.execute("""
+
+          db_path = "library.db"
+          conn = sqlite3.connect(db_path)
+          cur = conn.cursor()
+
+          cur.execute("""
           CREATE TABLE IF NOT EXISTS books (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               title TEXT NOT NULL,
@@ -44,18 +75,29 @@ jobs:
               available_copies INTEGER NOT NULL
           )
           """)
-          c.execute("DELETE FROM books WHERE isbn = '1234567890123'")
-          seed = [
+
+          # make sure the test ISBN is not there
+          cur.execute("DELETE FROM books WHERE isbn = '1234567890123'")
+
+          seed_rows = [
               ("1984", "George Orwell", "9780451524935", 5, 5),
               ("Harry Potter and the Philosopher's Stone", "J.K. Rowling", "9780747532699", 5, 5),
               ("To Kill a Mockingbird", "Harper Lee", "9780061120084", 5, 5),
               ("The Great Gatsby", "F. Scott Fitzgerald", "9780743273565", 5, 5),
           ]
-          for row in seed:
-              c.execute(
+          for row in seed_rows:
+              cur.execute(
                   "INSERT OR IGNORE INTO books (title, author, isbn, total_copies, available_copies) VALUES (?, ?, ?, ?, ?)",
-                  row,
+                  row
               )
+
+          # force correct data for Gatsby
+          cur.execute("""
+              UPDATE books
+                 SET title=?, author=?, total_copies=?, available_copies=?
+               WHERE isbn=?
+          """, ("The Great Gatsby", "F. Scott Fitzgerald", 5, 5, "9780743273565"))
+
           conn.commit()
           conn.close()
           PY
