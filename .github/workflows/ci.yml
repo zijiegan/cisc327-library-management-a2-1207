@@ -87,5 +87,7 @@ jobs:
 
 
       - name: Run tests
-        run: pytest -q
+        run: |
+          set PYTHONPATH=%CD%
+          pytest -q
         
