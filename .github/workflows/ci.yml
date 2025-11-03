@@ -88,6 +88,6 @@ jobs:
 
       - name: Run tests
         run: |
-          set PYTHONPATH=%CD%
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
           pytest -q
         
