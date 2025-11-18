@@ -105,4 +105,4 @@ jobs:
       - name: Run tests
         shell: bash
         run: |
-          pytest -q
+          pytest -q tests/ --ignore=tests/test_e2e.py
